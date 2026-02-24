@@ -22,6 +22,8 @@ export {
   getUpdateConfig,
   getChannelDetails,
   getChannelModel,
+  getChannelOpenCodeProfile,
+  setChannelOpenCodeProfile,
   getChannelAgentProvider,
   getSlackAppTokens,
   getSlackBotTokens,

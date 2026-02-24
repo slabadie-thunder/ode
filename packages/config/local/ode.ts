@@ -96,6 +96,7 @@ const channelDetailSchema = z.object({
     agentProviderSchema.optional().default("opencode")
   ),
   model: z.string().optional().default(""),
+  openCodeProfile: z.string().optional().default(""),
   workingDirectory: z.string().optional().default(""),
   baseBranch: z.string().optional().default("main"),
   channelSystemMessage: z.string().optional().default(""),
@@ -395,6 +396,7 @@ function mergeDashboardConfig(config: OdeConfig, dashboardConfig: DashboardConfi
     channelDetails: workspace.channelDetails.map((channel) => ({
       ...channel,
       agentProvider: channel.agentProvider ?? "opencode",
+      openCodeProfile: channel.openCodeProfile ?? "",
       channelSystemMessage: channel.channelSystemMessage ?? "",
     })),
   }));
@@ -774,6 +776,15 @@ export function setChannelSystemMessage(channelId: string, channelSystemMessage:
 
 export function getChannelModel(channelId: string): string | null {
   return getChannelDetails(channelId)?.model ?? null;
+}
+
+export function getChannelOpenCodeProfile(channelId: string): string {
+  return getChannelDetails(channelId)?.openCodeProfile ?? "";
+}
+
+export function setChannelOpenCodeProfile(channelId: string, openCodeProfile: string): void {
+  const normalized = openCodeProfile?.trim() ?? "";
+  updateChannel(channelId, (channel) => ({ ...channel, openCodeProfile: normalized }));
 }
 
 export function getChannelAgentProvider(channelId: string): AgentProvider {
