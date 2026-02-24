@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { checkApiAuth } from "@/config/auth";
 import { serveStaticAsset } from "./static-assets";
 import { registerConfigRoutes } from "./routes/config";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
@@ -9,6 +10,16 @@ import { registerActionRoutes } from "./routes/action";
 
 export function createWebApp(): Elysia {
   const app = new Elysia();
+
+  // API key authentication middleware — runs before every route handler.
+  // Returns 401 if ODE_API_KEY is set and the request doesn't supply it.
+  app.onRequest(({ request, set }) => {
+    const denied = checkApiAuth(request);
+    if (denied) {
+      set.status = denied.status as number;
+      return denied;
+    }
+  });
 
   app.get("/local-setting", () => new Response(null, {
     status: 307,
