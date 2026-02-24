@@ -65,6 +65,7 @@ export type DashboardConfig = {
       name: string;
       agentProvider?: "opencode" | "claudecode" | "codex" | "kimi" | "kiro" | "kilo" | "qwen" | "goose" | "gemini";
       model: string;
+      openCodeProfile?: string;
       workingDirectory: string;
       baseBranch: string;
       channelSystemMessage?: string;
@@ -177,6 +178,7 @@ const sanitizeChannelDetail = (
     name: asString(detail.name),
     agentProvider: asAgentProvider(detail.agentProvider),
     model: asString(detail.model),
+    openCodeProfile: asString(detail.openCodeProfile) || undefined,
     workingDirectory: asString(detail.workingDirectory),
     baseBranch: asBaseBranch(detail.baseBranch),
     channelSystemMessage: asString(detail.channelSystemMessage),

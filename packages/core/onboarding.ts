@@ -322,6 +322,7 @@ async function setupWorkspaces(rl: Interface, config: OdeConfig): Promise<OdeCon
         channelDetails: discoveredWorkspace.channelDetails.map((channel) => ({
           ...channel,
           agentProvider: channel.agentProvider ?? "opencode",
+          openCodeProfile: channel.openCodeProfile ?? "",
           baseBranch: channel.baseBranch?.trim() || "main",
           channelSystemMessage: channel.channelSystemMessage ?? "",
         })),

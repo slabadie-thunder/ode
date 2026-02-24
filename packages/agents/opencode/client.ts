@@ -146,13 +146,75 @@ export async function sendMessage(
           })()
         : undefined);
 
+      // Detect slash-command syntax: "/commandName [args]"
+      // These map to OpenCode's custom commands defined in .opencode/commands/.
+      // session.prompt() does not parse slash-command syntax, so we route to
+      // session.command() instead.
+      const trimmedMessage = message.trim();
+      if (trimmedMessage.startsWith("/")) {
+        const spaceIdx = trimmedMessage.indexOf(" ");
+        const commandName = spaceIdx === -1
+          ? trimmedMessage.slice(1)
+          : trimmedMessage.slice(1, spaceIdx);
+        const commandArgs = spaceIdx === -1 ? "" : trimmedMessage.slice(spaceIdx + 1).trim();
+
+        // session.command() accepts model as a plain "providerID/modelID" string.
+        const modelString = model ? `${model.providerID}/${model.modelID}` : undefined;
+
+        log.debug("Routing slash-command to session.command()", {
+          sessionId: activeSessionId,
+          commandName,
+          commandArgs,
+          agent,
+          model: modelString,
+        });
+
+        try {
+          const result = await client.session.command({
+            sessionID: activeSessionId,
+            directory: workingPath,
+            command: commandName,
+            arguments: commandArgs,
+            ...(agent ? { agent } : {}),
+            ...(modelString ? { model: modelString } : {}),
+          });
+
+          log.debug("OpenCode command raw result", {
+            commandName,
+            hasData: !!result.data,
+            hasError: !!result.error,
+            error: result.error ? JSON.stringify(result.error) : undefined,
+            dataKeys: result.data ? Object.keys(result.data as object) : [],
+          });
+
+          if (result.error) {
+            const sdkError = result.error as Record<string, unknown>;
+            const data = sdkError.data as Record<string, unknown> | undefined;
+            const errorMessage = typeof data?.message === "string"
+              ? data.message
+              : typeof sdkError.message === "string"
+                ? sdkError.message
+                : JSON.stringify(result.error);
+            throw new Error(`OpenCode command error: ${errorMessage}`);
+          }
+
+          return normalizeOpenCodeResponse(result.data);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn("OpenCode slash-command failed", { commandName, error: errorMessage });
+          return [{
+            text: `Command \`/${commandName}\` failed: ${errorMessage}`,
+            messageType: "assistant" as const,
+          }];
+        }
+      }
+
       // Build message parts
       const parts = buildPromptParts(channelId, message, { ...options, agent }, context);
 
       // Build system prompt with Slack context
       const system = buildSystemPrompt(context?.slack);
       const payload = { directory: workingPath, parts, agent, model, system };
-      // const payload = { directory: workingPath, parts, agent, model };
       const serverUrl = getSessionServerUrl(activeSessionId);
       const command = serverUrl
         ? buildOpenCodeCommand(serverUrl, activeSessionId, payload)
@@ -179,57 +241,95 @@ export async function sendMessage(
         throw new Error("OpenCode returned empty response");
       }
 
-      // Extract text from response in a few known shapes.
-      const messages: OpenCodeMessage[] = [];
-      const data = result.data as Record<string, unknown>;
-
-      const pushText = (value: unknown): void => {
-        if (typeof value !== "string") return;
-        const text = value.trim();
-        if (!text) return;
-        messages.push({
-          text,
-          messageType: "assistant",
-        });
-      };
-
-      const responseParts = Array.isArray(data.parts) ? data.parts : [];
-      for (const part of responseParts) {
-        if (!part || typeof part !== "object") continue;
-        const record = part as Record<string, unknown>;
-        if (record.type === "text") {
-          pushText(record.text);
-        }
-      }
-
-      if (messages.length === 0 && Array.isArray(data.messages)) {
-        for (const entry of data.messages) {
-          if (!entry || typeof entry !== "object") continue;
-          const record = entry as Record<string, unknown>;
-          pushText(record.text);
-          if (Array.isArray(record.parts)) {
-            for (const part of record.parts) {
-              if (!part || typeof part !== "object") continue;
-              const partRecord = part as Record<string, unknown>;
-              if (partRecord.type === "text") {
-                pushText(partRecord.text);
-              }
-            }
-          }
-        }
-      }
-
-      if (messages.length === 0) {
-        pushText(data.text);
-        pushText(data.output_text);
-      }
-
+      const messages = normalizeOpenCodeResponse(result.data);
       log.debug("OpenCode completed", { messageCount: messages.length });
       return messages;
     });
   } finally {
     runtime.endRequest(sessionKey);
   }
+}
+
+// Regex that matches a line consisting only of a slash-command name and trailing
+// whitespace — e.g. "/agents   " or "/compact". Used to detect and strip the
+// OpenCode TUI command-palette block that leaks into session.command() responses
+// when a command triggers an interactive question mid-execution.
+const TUI_SLASH_LINE_RE = /^\/[a-z][a-z0-9_-]*\s*$/;
+
+function stripTuiCommandPalette(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    // A TUI palette block looks like:
+    //   /agents               \n
+    //   Switch agent          \n
+    //   /compact              \n
+    //   Compact session       \n
+    // Detect two consecutive pairs and strip the entire contiguous block.
+    if (
+      TUI_SLASH_LINE_RE.test(line) &&
+      i + 1 < lines.length &&
+      // next line is the description (non-empty, not a slash-command itself)
+      (lines[i + 1] ?? "").trim().length > 0 &&
+      !TUI_SLASH_LINE_RE.test(lines[i + 1] ?? "")
+    ) {
+      // Skip the slash-command line and its description line.
+      i += 2;
+      continue;
+    }
+    out.push(line);
+    i++;
+  }
+  return out.join("\n").trim();
+}
+
+function normalizeOpenCodeResponse(data: unknown): OpenCodeMessage[] {
+  const messages: OpenCodeMessage[] = [];
+
+  const pushText = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const cleaned = stripTuiCommandPalette(value);
+    if (!cleaned) return;
+    messages.push({ text: cleaned, messageType: "assistant" });
+  };
+
+  if (!data || typeof data !== "object") return messages;
+  const record = data as Record<string, unknown>;
+
+  const responseParts = Array.isArray(record.parts) ? record.parts : [];
+  for (const part of responseParts) {
+    if (!part || typeof part !== "object") continue;
+    const partRecord = part as Record<string, unknown>;
+    if (partRecord.type === "text") {
+      pushText(partRecord.text);
+    }
+  }
+
+  if (messages.length === 0 && Array.isArray(record.messages)) {
+    for (const entry of record.messages) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryRecord = entry as Record<string, unknown>;
+      pushText(entryRecord.text);
+      if (Array.isArray(entryRecord.parts)) {
+        for (const part of entryRecord.parts) {
+          if (!part || typeof part !== "object") continue;
+          const partRecord = part as Record<string, unknown>;
+          if (partRecord.type === "text") {
+            pushText(partRecord.text);
+          }
+        }
+      }
+    }
+  }
+
+  if (messages.length === 0) {
+    pushText(record.text);
+    pushText(record.output_text);
+  }
+
+  return messages;
 }
 
 export interface ProgressEvent {

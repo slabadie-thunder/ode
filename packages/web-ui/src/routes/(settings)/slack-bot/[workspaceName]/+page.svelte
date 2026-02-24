@@ -191,6 +191,19 @@
     onChannelWorkingDirectoryChange(workspaceId, channelId, (event.currentTarget as HTMLInputElement).value);
   }
 
+  function onChannelOpenCodeProfileChange(workspaceId: string, channelId: string, openCodeProfile: string): void {
+    localSettingStore.updateWorkspace(workspaceId, (workspace) => ({
+      ...workspace,
+      channelDetails: workspace.channelDetails.map((channel) =>
+        channel.id === channelId ? { ...channel, openCodeProfile } : channel
+      ),
+    }));
+  }
+
+  function onChannelOpenCodeProfileInput(workspaceId: string, channelId: string, event: Event): void {
+    onChannelOpenCodeProfileChange(workspaceId, channelId, (event.currentTarget as HTMLInputElement).value);
+  }
+
   function onChannelSystemMessageChange(workspaceId: string, channelId: string, channelSystemMessage: string): void {
     localSettingStore.updateWorkspace(workspaceId, (workspace) => ({
       ...workspace,
@@ -349,7 +362,7 @@
 
     <div class="grid gap-4 md:grid-cols-2">
       <div class="grid gap-2">
-        <Label for="workspace-name">Workspace Name</Label>
+        <Label for="workspace-name">Workspace Name asd</Label>
         <Input
           id="workspace-name"
           value={selectedWorkspace.name}
@@ -494,6 +507,19 @@
                   </div>
                 {/if}
               </div>
+
+              {#if getChannelProvider(channel) === "opencode"}
+                <div class="grid gap-2">
+                  <Label for={`channel-opencode-profile-${channel.id}`}>OpenCode Profile (optional)</Label>
+                  <Input
+                    id={`channel-opencode-profile-${channel.id}`}
+                    value={channel.openCodeProfile ?? ""}
+                    placeholder="e.g. orchestrator"
+                    on:input={(event) => onChannelOpenCodeProfileInput(selectedWorkspace.id, channel.id, event)}
+                  />
+                  <p class="text-xs text-[hsl(var(--muted-foreground))]">The subagent/profile to use, e.g. orchestrator, project-manager. Leave blank for the default build profile.</p>
+                </div>
+              {/if}
 
               <div class="grid gap-2">
                 <Label for={`channel-working-directory-${channel.id}`}>Working directory</Label>

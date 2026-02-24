@@ -1,4 +1,4 @@
-import { DEFAULT_CODEX_MODEL, getChannelModel } from "@/config";
+import { DEFAULT_CODEX_MODEL, getChannelModel, getChannelOpenCodeProfile } from "@/config";
 import type { OpenCodeOptions } from "@/agents";
 
 type ProviderId = "opencode" | "claudecode" | "codex" | "kimi" | "kiro" | "kilo" | "qwen" | "goose" | "gemini";
@@ -20,7 +20,14 @@ export function buildMessageOptions(params: {
 }): OpenCodeOptions | undefined {
   const { text, channelId, providerId } = params;
   const normalizedText = text.trimStart().toLowerCase();
-  const agent = /^plan\b/.test(normalizedText) ? "plan" : undefined;
+
+  // "plan" prefix in the message overrides the channel profile; otherwise fall
+  // back to the configured OpenCode profile for this channel (opencode only).
+  const planPrefix = /^plan\b/.test(normalizedText);
+  const channelProfile = providerId === "opencode"
+    ? (getChannelOpenCodeProfile(channelId) || undefined)
+    : undefined;
+  const agent = planPrefix ? "plan" : channelProfile;
 
   const channelModel = getChannelModel(channelId)?.trim();
   const codexModel = providerId === "codex"

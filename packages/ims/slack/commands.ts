@@ -2,6 +2,8 @@ import { getApps } from "./client";
 import {
   getChannelAgentProvider,
   getChannelModel,
+  getChannelOpenCodeProfile,
+  setChannelOpenCodeProfile,
   resolveChannelCwd,
   getEnabledAgentProviders,
   getOpenCodeModels,
@@ -45,6 +47,8 @@ const BASE_BRANCH_BLOCK = "base_branch";
 const BASE_BRANCH_ACTION = "base_branch_input";
 const CHANNEL_SYSTEM_MESSAGE_BLOCK = "channel_system_message";
 const CHANNEL_SYSTEM_MESSAGE_ACTION = "channel_system_message_input";
+const OPENCODE_PROFILE_BLOCK = "opencode_profile";
+const OPENCODE_PROFILE_ACTION = "opencode_profile_input";
 const GENERAL_STATUS_MESSAGE_FORMAT_BLOCK = "general_status_message_format";
 const GENERAL_STATUS_MESSAGE_FORMAT_ACTION = "general_status_message_format_select";
 const GENERAL_STATUS_MESSAGE_FREQUENCY_BLOCK = "general_status_message_frequency";
@@ -191,6 +195,7 @@ function buildSettingsModal(params: {
   kiloModels: string[];
   selectedProvider?: AgentProvider;
   selectedModel?: string | null;
+  openCodeProfile?: string | null;
   workingDirectory?: string | null;
   baseBranch?: string | null;
   channelSystemMessage?: string | null;
@@ -203,6 +208,7 @@ function buildSettingsModal(params: {
     kiloModels,
     selectedProvider = "opencode",
     selectedModel,
+    openCodeProfile,
     workingDirectory,
     baseBranch,
     channelSystemMessage,
@@ -299,6 +305,22 @@ function buildSettingsModal(params: {
         },
       },
     );
+  }
+
+  if (selectedProvider === "opencode") {
+    blocks.push({
+      type: "input" as const,
+      block_id: OPENCODE_PROFILE_BLOCK,
+      optional: true,
+      label: { type: "plain_text" as const, text: "OpenCode Profile (optional)" },
+      hint: { type: "plain_text" as const, text: "The subagent/profile to use, e.g. orchestrator, project-manager. Leave blank for the default build profile." },
+      element: {
+        type: "plain_text_input" as const,
+        action_id: OPENCODE_PROFILE_ACTION,
+        initial_value: openCodeProfile ?? "",
+        placeholder: { type: "plain_text" as const, text: "e.g. orchestrator" },
+      },
+    });
   }
 
   blocks.push({
@@ -548,6 +570,7 @@ export function setupInteractiveHandlers(): void {
       kiloModels: getKiloModels(),
       selectedProvider: toSelectableProvider(getChannelAgentProvider(channelId)),
       selectedModel: getChannelModel(channelId),
+      openCodeProfile: getChannelOpenCodeProfile(channelId),
       workingDirectory: resolveChannelCwd(channelId).workingDirectory,
       baseBranch: getChannelBaseBranch(channelId),
       channelSystemMessage: getChannelSystemMessage(channelId),
@@ -636,6 +659,9 @@ export function setupInteractiveHandlers(): void {
     const selectedModel = view.state?.values?.[MODEL_BLOCK]?.[MODEL_ACTION]?.selected_option?.value
       || getChannelModel(channelId)
       || undefined;
+    const openCodeProfile = view.state?.values?.[OPENCODE_PROFILE_BLOCK]?.[OPENCODE_PROFILE_ACTION]?.value
+      ?? getChannelOpenCodeProfile(channelId)
+      ?? "";
     const workingDirectory = view.state?.values?.[WORKING_DIR_BLOCK]?.[WORKING_DIR_ACTION]?.value || "";
     const baseBranch = view.state?.values?.[BASE_BRANCH_BLOCK]?.[BASE_BRANCH_ACTION]?.value
       || getChannelBaseBranch(channelId)
@@ -652,6 +678,7 @@ export function setupInteractiveHandlers(): void {
       kiloModels: getKiloModels(),
       selectedProvider,
       selectedModel,
+      openCodeProfile,
       workingDirectory,
       baseBranch,
       channelSystemMessage,
@@ -671,6 +698,7 @@ export function setupInteractiveHandlers(): void {
       values?.[PROVIDER_BLOCK]?.[PROVIDER_ACTION]?.selected_option?.value
     );
     const selectedModel = values?.[MODEL_BLOCK]?.[MODEL_ACTION]?.selected_option?.value;
+    const openCodeProfile = values?.[OPENCODE_PROFILE_BLOCK]?.[OPENCODE_PROFILE_ACTION]?.value || "";
     const workingDirectory = values?.[WORKING_DIR_BLOCK]?.[WORKING_DIR_ACTION]?.value || "";
     const baseBranch = values?.[BASE_BRANCH_BLOCK]?.[BASE_BRANCH_ACTION]?.value || "main";
     const channelSystemMessage = values?.[CHANNEL_SYSTEM_MESSAGE_BLOCK]?.[CHANNEL_SYSTEM_MESSAGE_ACTION]?.value || "";
@@ -732,6 +760,9 @@ export function setupInteractiveHandlers(): void {
       if (selectedProvider === "claudecode" || selectedProvider === "kimi" || selectedProvider === "kiro" || selectedProvider === "qwen" || selectedProvider === "goose" || selectedProvider === "gemini") {
         setChannelModel(channelId, "");
       }
+
+      // Save OpenCode profile — only applicable when provider is opencode; clear otherwise.
+      setChannelOpenCodeProfile(channelId, selectedProvider === "opencode" ? openCodeProfile : "");
 
       const workingDirValue = workingDirectory.trim();
       setChannelWorkingDirectory(channelId, workingDirValue.length > 0 ? workingDirValue : null);
