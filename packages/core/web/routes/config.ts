@@ -1,5 +1,5 @@
 import type { Elysia } from "elysia";
-import { defaultDashboardConfig, sanitizeDashboardConfig } from "@/config";
+import { defaultDashboardConfig, redactDashboardConfig, sanitizeDashboardConfig } from "@/config";
 import { readLocalSettings, writeLocalSettings } from "../local-settings";
 import { jsonResponse, runRoute } from "../http";
 import { validateWorkspaceConfig } from "../config-validation";
@@ -10,7 +10,7 @@ export function registerConfigRoutes(app: Elysia): void {
     const config = await readLocalSettings();
     return jsonResponse(200, {
       ok: true,
-      config: config as typeof defaultDashboardConfig,
+      config: redactDashboardConfig(config) as typeof defaultDashboardConfig,
       version: APP_VERSION,
     });
   });

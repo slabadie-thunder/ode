@@ -240,6 +240,28 @@ const sanitizeWorkspaces = (workspaces: unknown): DashboardConfig["workspaces"] 
   );
 };
 
+const REDACTED = "***";
+
+/**
+ * Returns a copy of the config safe to send over the wire — all platform
+ * tokens and secrets are replaced with "***" so they are never exposed via
+ * the API.  The original file on disk is not affected.
+ */
+export function redactDashboardConfig(config: DashboardConfig): DashboardConfig {
+  return {
+    ...config,
+    workspaces: config.workspaces.map((workspace) => ({
+      ...workspace,
+      slackAppToken: workspace.slackAppToken ? REDACTED : workspace.slackAppToken,
+      slackBotToken: workspace.slackBotToken ? REDACTED : workspace.slackBotToken,
+      discordBotToken: workspace.discordBotToken ? REDACTED : workspace.discordBotToken,
+      larkAppKey: workspace.larkAppKey ? REDACTED : workspace.larkAppKey,
+      larkAppId: workspace.larkAppId ? REDACTED : workspace.larkAppId,
+      larkAppSecret: workspace.larkAppSecret ? REDACTED : workspace.larkAppSecret,
+    })),
+  };
+}
+
 export const sanitizeDashboardConfig = (config: unknown): DashboardConfig => {
   if (!config || typeof config !== "object") {
     return cloneDefaultDashboardConfig();
