@@ -51,6 +51,35 @@ ode
 
 Settings UI can be accessible via http://127.0.0.1:9293 or use `/setting` command in slack like `@bot /setting`.
 
+## Security
+
+### API key authentication
+
+When deploying Ode on a server (e.g. AWS), set `ODE_API_KEY` to protect the web API from unauthorized access:
+
+```bash
+# Generate a strong key
+export ODE_API_KEY=$(openssl rand -hex 32)
+ODE_WEB_HOST=0.0.0.0 ode
+```
+
+All `/api/*` requests will then require the key via one of these headers:
+
+```
+Authorization: Bearer <your-key>
+X-API-Key: <your-key>
+```
+
+The Lark webhook paths (`/api/lark/event`, `/api/lark-event`) are exempt — they are called by Lark's servers and use Lark's own signature verification.
+
+If `ODE_API_KEY` is not set, the web server behaves as before (no auth). This is safe when binding to `127.0.0.1` for local use only.
+
+### Credential storage
+
+All platform tokens (Slack, Discord, Lark) and GitHub personal access tokens are stored in `~/.config/ode/ode.json`. Keep this file readable only by your user (`chmod 600 ~/.config/ode/ode.json`).
+
+The `GET /api/config` endpoint redacts all token values (replacing them with `***`) so credentials are never exposed over the wire, even to authenticated dashboard users.
+
 ## Agent List
 
 | Agent | Logo | Link |

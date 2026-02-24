@@ -60,6 +60,7 @@ export {
 
 export {
   defaultDashboardConfig,
+  redactDashboardConfig,
   sanitizeDashboardConfig,
   type DashboardConfig,
 } from "./dashboard-config";
@@ -75,6 +76,8 @@ export { resolveMessageUpdateIntervalMs } from "./message-update-interval";
 export { resolveGitStrategy, type GitStrategy } from "./git-strategy";
 
 export { getSlackActionApiUrl, getWebHost, getWebPort } from "./network";
+
+export { checkApiAuth, isApiAuthEnabled } from "./auth";
 
 export * as local from "./local";
 export * as db from "./db";
