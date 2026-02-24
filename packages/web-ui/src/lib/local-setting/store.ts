@@ -1,6 +1,8 @@
 import { get, writable } from "svelte/store";
 import { defaultDashboardConfig, type DashboardConfig } from "../localConfig";
 
+const SESSION_STORAGE_KEY = "ode-api-key";
+
 export type CliCheckResult = {
   opencode: boolean;
   claude: boolean;
@@ -29,6 +31,9 @@ type LocalSettingState = {
   message: string;
   agentMessage: string;
   cliCheckResult: CliCheckResult | null;
+  // Auth
+  apiKey: string | null;
+  isLocked: boolean;
 };
 
 const initialState: LocalSettingState = {
@@ -43,9 +48,68 @@ const initialState: LocalSettingState = {
   message: "",
   agentMessage: "",
   cliCheckResult: null,
+  apiKey: null,
+  isLocked: true,
 };
 
 const store = writable<LocalSettingState>(initialState);
+
+// ─── API key helpers ──────────────────────────────────────────────────────────
+
+function readStoredApiKey(): string | null {
+  try {
+    return sessionStorage.getItem(SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistApiKey(key: string): void {
+  try {
+    if (key) {
+      sessionStorage.setItem(SESSION_STORAGE_KEY, key);
+    } else {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // sessionStorage not available (e.g. private browsing restrictions)
+  }
+}
+
+function removeStoredApiKey(): void {
+  try {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // noop
+  }
+}
+
+/**
+ * Wraps fetch() and attaches X-API-Key when a key is set.
+ * If the response is 401, marks the store as locked and throws so callers
+ * surface the error normally.
+ */
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const key = get(store).apiKey;
+  const headers = new Headers(init.headers);
+  if (key) {
+    headers.set("x-api-key", key);
+  }
+  const response = await fetch(url, { ...init, headers });
+  if (response.status === 401) {
+    store.update((state) => ({
+      ...state,
+      isLocked: true,
+      apiKey: null,
+      message: "Session expired or invalid API key. Please unlock again.",
+    }));
+    removeStoredApiKey();
+    throw new Error("Unauthorized");
+  }
+  return response;
+}
+
+// ─── Config validation ────────────────────────────────────────────────────────
 
 function validateWorkspaceConfig(config: DashboardConfig): string | null {
   const idCounts = new Map<string, number>();
@@ -181,6 +245,8 @@ function normalizeConfig(input: DashboardConfig): DashboardConfig {
   };
 }
 
+// ─── Store mutations ──────────────────────────────────────────────────────────
+
 function updateConfig(updater: (config: DashboardConfig) => DashboardConfig): void {
   store.update((state) => ({
     ...state,
@@ -207,13 +273,60 @@ function removeWorkspace(workspaceId: string): void {
   }));
 }
 
+// ─── Auth actions ─────────────────────────────────────────────────────────────
+
+/**
+ * Called on app mount. Reads any key stored from a previous unlock in this
+ * session and pre-populates the store so the lock screen is skipped if valid.
+ * Returns the key (or null) so the caller can decide whether to auto-load.
+ */
+function resolveStoredApiKey(): string | null {
+  const stored = readStoredApiKey();
+  if (stored !== null) {
+    store.update((state) => ({ ...state, apiKey: stored }));
+  }
+  return stored;
+}
+
+/**
+ * Sets the API key in the store and sessionStorage, clears any previous auth
+ * error, and marks the dashboard as unlocked. Does NOT trigger loadConfig —
+ * the caller is responsible for doing that so it can handle the result.
+ */
+function setApiKey(key: string): void {
+  const trimmed = key.trim();
+  persistApiKey(trimmed);
+  store.update((state) => ({
+    ...state,
+    apiKey: trimmed || null,
+    isLocked: false,
+    message: "",
+  }));
+}
+
+/**
+ * Locks the dashboard and removes the stored key.
+ */
+function clearApiKey(): void {
+  removeStoredApiKey();
+  store.update((state) => ({
+    ...state,
+    apiKey: null,
+    isLocked: true,
+    loaded: false,
+    message: "",
+  }));
+}
+
+// ─── API actions ──────────────────────────────────────────────────────────────
+
 async function loadConfig(): Promise<void> {
   const current = get(store);
   if (current.isLoading) return;
 
   store.update((state) => ({ ...state, isLoading: true, message: "" }));
   try {
-    const response = await fetch("/api/config");
+    const response = await apiFetch("/api/config");
     const payload = (await response.json()) as {
       ok?: boolean;
       error?: string;
@@ -229,8 +342,14 @@ async function loadConfig(): Promise<void> {
       appVersion: typeof payload.version === "string" ? payload.version : state.appVersion,
       loaded: true,
       isLoading: false,
+      isLocked: false,
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      // apiFetch already updated the store; just clear loading state
+      store.update((state) => ({ ...state, isLoading: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       loaded: true,
@@ -253,7 +372,7 @@ async function saveConfig(): Promise<void> {
 
   store.update((state) => ({ ...state, isSaving: true, message: "" }));
   try {
-    const response = await fetch("/api/config", {
+    const response = await apiFetch("/api/config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -275,6 +394,10 @@ async function saveConfig(): Promise<void> {
       message: "Saved.",
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isSaving: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       isSaving: false,
@@ -286,7 +409,7 @@ async function saveConfig(): Promise<void> {
 async function checkAgents(): Promise<void> {
   store.update((state) => ({ ...state, isCheckingCli: true, agentMessage: "" }));
   try {
-    const response = await fetch("/api/agent-check");
+    const response = await apiFetch("/api/agent-check");
     const payload = (await response.json()) as {
       ok?: boolean;
       error?: string;
@@ -355,6 +478,10 @@ async function checkAgents(): Promise<void> {
             : "Checked local agent CLIs.",
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isCheckingCli: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       isCheckingCli: false,
@@ -366,7 +493,7 @@ async function checkAgents(): Promise<void> {
 async function syncSlackWorkspace(workspaceId: string): Promise<void> {
   store.update((state) => ({ ...state, isSyncingSlack: true, message: "" }));
   try {
-    const response = await fetch("/api/slack-sync", {
+    const response = await apiFetch("/api/slack-sync", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId }),
@@ -391,6 +518,10 @@ async function syncSlackWorkspace(workspaceId: string): Promise<void> {
       message: "Slack workspace synced.",
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isSyncingSlack: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       isSyncingSlack: false,
@@ -402,7 +533,7 @@ async function syncSlackWorkspace(workspaceId: string): Promise<void> {
 async function syncDiscordWorkspace(workspaceId: string): Promise<void> {
   store.update((state) => ({ ...state, isSyncingSlack: true, message: "" }));
   try {
-    const response = await fetch("/api/discord-sync", {
+    const response = await apiFetch("/api/discord-sync", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId }),
@@ -427,6 +558,10 @@ async function syncDiscordWorkspace(workspaceId: string): Promise<void> {
       message: "Discord workspace synced.",
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isSyncingSlack: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       isSyncingSlack: false,
@@ -438,7 +573,7 @@ async function syncDiscordWorkspace(workspaceId: string): Promise<void> {
 async function syncLarkWorkspace(workspaceId: string): Promise<void> {
   store.update((state) => ({ ...state, isSyncingSlack: true, message: "" }));
   try {
-    const response = await fetch("/api/lark-sync", {
+    const response = await apiFetch("/api/lark-sync", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId }),
@@ -463,6 +598,10 @@ async function syncLarkWorkspace(workspaceId: string): Promise<void> {
       message: "Lark workspace synced.",
     }));
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isSyncingSlack: false }));
+      return;
+    }
     store.update((state) => ({
       ...state,
       isSyncingSlack: false,
@@ -487,7 +626,7 @@ async function discoverSlackWorkspace(
 
   store.update((state) => ({ ...state, isAddingWorkspace: true, message: "" }));
   try {
-    const response = await fetch("/api/slack-discover", {
+    const response = await apiFetch("/api/slack-discover", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ slackAppToken: appToken, slackBotToken: botToken }),
@@ -533,6 +672,10 @@ async function discoverSlackWorkspace(
 
     return addedWorkspace;
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isAddingWorkspace: false }));
+      return null;
+    }
     store.update((state) => ({
       ...state,
       isAddingWorkspace: false,
@@ -556,7 +699,7 @@ async function discoverDiscordWorkspace(
 
   store.update((state) => ({ ...state, isAddingWorkspace: true, message: "" }));
   try {
-    const response = await fetch("/api/discord-discover", {
+    const response = await apiFetch("/api/discord-discover", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ discordBotToken: botToken }),
@@ -602,6 +745,10 @@ async function discoverDiscordWorkspace(
 
     return addedWorkspace;
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isAddingWorkspace: false }));
+      return null;
+    }
     store.update((state) => ({
       ...state,
       isAddingWorkspace: false,
@@ -627,7 +774,7 @@ async function discoverLarkWorkspace(
 
   store.update((state) => ({ ...state, isAddingWorkspace: true, message: "" }));
   try {
-    const response = await fetch("/api/lark-discover", {
+    const response = await apiFetch("/api/lark-discover", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ larkAppKey: appId, larkAppSecret: appSecret }),
@@ -673,6 +820,10 @@ async function discoverLarkWorkspace(
 
     return addedWorkspace;
   } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      store.update((state) => ({ ...state, isAddingWorkspace: false }));
+      return null;
+    }
     store.update((state) => ({
       ...state,
       isAddingWorkspace: false,
@@ -696,4 +847,7 @@ export const localSettingStore = {
   updateConfig,
   updateWorkspace,
   removeWorkspace,
+  resolveStoredApiKey,
+  setApiKey,
+  clearApiKey,
 };

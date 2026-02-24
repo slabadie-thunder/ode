@@ -1,5 +1,6 @@
 import { existsSync } from "fs";
 import { join, resolve, sep } from "path";
+import { isApiAuthEnabled } from "@/config/auth";
 
 let EMBEDDED_ASSETS: Record<string, string> = {};
 let HAS_EMBEDDED_ASSETS = false;

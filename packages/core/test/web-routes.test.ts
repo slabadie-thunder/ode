@@ -117,6 +117,12 @@ describe("API key authentication middleware", () => {
 });
 
 describe("web app routing", () => {
+  // Ensure ODE_API_KEY is never set for these pre-auth tests so auth
+  // middleware doesn't interfere with the expected status codes.
+  let savedKey: string | undefined;
+  beforeEach(() => { savedKey = process.env.ODE_API_KEY; delete process.env.ODE_API_KEY; });
+  afterEach(() => { if (savedKey === undefined) { delete process.env.ODE_API_KEY; } else { process.env.ODE_API_KEY = savedKey; } });
+
   it("redirects /local-setting to root", async () => {
     const app = createWebApp();
     const response = await app.handle(new Request("http://localhost/local-setting"));
